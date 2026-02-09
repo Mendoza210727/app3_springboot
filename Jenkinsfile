@@ -1,37 +1,64 @@
 pipeline {
-  agent any
-  environment {
-    IMAGE_NAME = "demo-ci-cd:latest"
-  }
-  stages {
-    stage('Checkout') {
-      steps {
-        //checkout scm
-        git branch: 'main', url: 'https://github.com/Mendoza210727/app3_springboot.git'
-      }
+    agent any
+
+    environment {
+        // Asegúrate que este usuario coincida con el del servidor
+        SERVER_USER = 'jenkins' 
+        // ¡VERIFICA ESTA IP! Usa la que te dio el comando 'ip addr'
+        SERVER_HOST = '192.168.100.60' 
+        JAR_NAME    = 'target/demo-0.0.1-SNAPSHOT.jar'
+        REMOTE_JAR  = '/tmp/app.jar'
+        // ID de la credencial que guardaste en Jenkins (Paso anterior)
+        SSH_CRED_ID = 'github-ssh-key' 
     }
-    stage('Build & Test') {
-      steps {
-        sh 'mvn -B clean package'
-      }
+
+    stages {
+        stage('Build & Test') {
+            steps {
+                sh 'mvn -B clean package'
+            }
+        }
+
+        stage('Deploy 8081 (rolling)') {
+            steps {
+                // Envolvemos todo en sshagent para usar la llave
+                sshagent([SSH_CRED_ID]) {
+                    sh """
+                        # Desactivamos StrictHostKeyChecking para evitar preguntas de "yes/no"
+                        scp -o StrictHostKeyChecking=no ${JAR_NAME} ${SERVER_USER}@${SERVER_HOST}:${REMOTE_JAR}
+                        
+                        ssh -o StrictHostKeyChecking=no ${SERVER_USER}@${SERVER_HOST} \
+                            '/opt/spring-boot-app/deploy.sh ${REMOTE_JAR} 8081'
+                    """
+                }
+            }
+        }
+
+        stage('Wait for startup') {
+             steps {
+                 // Esperamos un poco para que Spring Boot arranque antes de actualizar el siguiente
+                 sleep 15
+             }
+        }
+
+        stage('Deploy 8082 (rolling)') {
+            steps {
+                sshagent([SSH_CRED_ID]) {
+                    sh """
+                        ssh -o StrictHostKeyChecking=no ${SERVER_USER}@${SERVER_HOST} \
+                            '/opt/spring-boot-app/deploy.sh ${REMOTE_JAR} 8082'
+                    """
+                }
+            }
+        }
     }
-    stage('Build Docker Image') {
-      steps {
-        sh 'echo "docker build -t $IMAGE_NAME ."'
-      }
+
+    post {
+        success {
+            echo '✅ Despliegue Exitoso: App corriendo en puertos 8081 y 8082'
+        }
+        failure {
+            echo '❌ Error en el despliegue'
+        }
     }
-    stage('Run Container') {
-      steps {
-        sh 'echo "docker rm -f demo-ci-cd || true"'
-        //sh 'docker rm -f demo-ci-cd || true'
-        //sh 'docker run -d --name demo-ci-cd -p 8080:8080 $IMAGE_NAME'
-      }
-    }
-  }
-  post {
-    always {
-      junit '**/target/surefire-reports/*.xml'
-      archiveArtifacts artifacts: 'target/*.jar', fingerprint: true
-    }
-  }
 }
