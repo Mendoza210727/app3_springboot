@@ -58,7 +58,7 @@ pipeline {
             echo '✅ Despliegue Exitoso: App corriendo en puertos 8081 y 8082'
         }
         failure {
-            echo '❌ Error en el despliegue 1'
+            echo '❌ Error en el despliegue 2'
         }
     }
 }
